@@ -10,7 +10,6 @@ CC ?= gcc
 CXX ?= g++
 CXXFLAGS += -I ../src/ -I ./ -DLINUX
 LDFLAGS += -lrt -lpthread
-
 ifeq ($(build),debug)
 	CXXFLAGS += -c -g2 -O0 \
 		-Wall -Weffc++ \
@@ -41,7 +40,7 @@ ifeq ($(build),debug)
 	# Uncomment this to get pedantic warnings:
 	#CXXFLAGS += -pedantic -Wvariadic-macros -Wunused-parameter -Waggregate-return -Wcast-qual -Wpadded
 else
-	CXXFLAGS += -c -O3 -w
+	CXXFLAGS += -c -O3 -w 
 	LDFLAGS += -s
 endif
 
