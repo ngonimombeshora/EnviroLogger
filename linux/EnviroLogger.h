@@ -32,10 +32,10 @@
 #include <iostream>
 
 //Define buttons *4
-#define CHANGE_TIME_INTERVAL 3// Write your value here
-#define RESET_STYSTEM_TIME 4 // Write your value here
-#define DISMISS_ALARM 3// Write your value here
-#define START_STOP_MONITORING 4 // Write your value here
+#define CHANGE_TIME_INTERVAL 27// Write your value here
+#define RESET_STYSTEM_TIME 23// Write your value here
+#define DISMISS_ALARM 22// Write your value here
+#define START_STOP_MONITORING 17 // Write your value here
 
 //FOR RTC
 // define constants
@@ -77,6 +77,7 @@ int decCompensation(int units);
 void mcp3008_read(uint8_t);
 void warning_light(void);
 void warning_checker(void);
-
+void timer(int delay_time) ;
+int timeConverter(int hrs, int min, int sec);
 
 #endif

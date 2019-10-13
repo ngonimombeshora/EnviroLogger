@@ -15,10 +15,15 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  */
+#include "CurrentTime.h"
+#include <time.h>
+
+int HH,MM,SS;
 
 #include "EnviroLogger.h"
 #include <wiringPiSPI.h>
 #include "CurrentTime.h"
+#include <softPwm.h>
 
 //---------------------------------------------------------
 //#define BLYNK_DEBUG
@@ -41,31 +46,42 @@ static uint16_t port;
  //global variables
 long lastInterruptTime = 0;
 int RTC; //Holds the RTC instance
-int TEMP_READING;
-int HUMIDITY_READING;
+int TEMP_READING ;
+float HUMIDITY_READING ; 
 int LDR_READING;
 bool warning_flag = false;
+bool STOP = false;
+float DAC_VOUT ;//(LDR_READING/1023)*HUMIDITY_READING;
+char alarm_status = ' ';
+// hours, minutes, seconds of timer 
+int hours = 0; 
+int minutes = 0; 
+int seconds = 0; 
+int delay_time = 700;
+int delay_compensation = 700; 
+int dismissal_hours = 0;
+int dismissal_Minutes = 0;
+int dismissal_Seconds=0;
+int ran = 0;
+
 //------------------------------------------------------
-int buttonPin = 17; //GPIO17 Pin on the Pi // to seee how buttons are labelled
 
  void setup()
 {
     Blynk.begin(auth, serv, port);
-    pinMode(buttonPin, INPUT); //Set GPIO17 as input
-    pullUpDnControl (buttonPin, PUD_UP); //Set GPIO17 internal pull up
+   
 }
 //------------------------------------------------------------
 void loop()
 {
 	warning_checker(); //validate reading before sending to blynk app
-    Blynk.run();
+	Blynk.run();
 	 Blynk.virtualWrite(V1, HUMIDITY_READING); 
-	 Blynk.virtualWrite(V2, TEMP_READING); 
+	 Blynk.virtualWrite(V2, (TEMP_READING*330/1024)); 
 	 Blynk.virtualWrite(V3, LDR_READING); 
-	if (warning_flag){
-		warning_light();
-	}
-
+	Blynk.virtualWrite(V4, "|Humidity:",HUMIDITY_READING, "|Temp:",(TEMP_READING*330/1024), "|Light",LDR_READING),"|\n";
+	//Serial.println("|Humidity:",HUMIDITY_READING, "|Temp:",TEMP_READING, "|Light",LDR_READING),"|\n");
+	warning_light();
 }
 //-------------------------------------------------------------------
 
@@ -78,7 +94,19 @@ void change_time_interval(void){
     long interruptTime = millis();
 	if (interruptTime - lastInterruptTime>200){
         //Write your logis here
-       
+       if(delay_time == 700){
+		   delay_time = 1700;//850*2
+		   delay_compensation = 850;
+	   }
+	   else if(delay_time == 1700){
+		   delay_time = 4750;//950*5
+		   delay_compensation = 950;
+	   }
+	   else{
+		   delay_time = 700;//700*1
+		   delay_compensation = 700;
+	   }
+	   printf("Delay_time%d\n", delay_time);
     }
 	lastInterruptTime = interruptTime;
 }
@@ -88,6 +116,11 @@ void reset_system_time(void){
     long interruptTime = millis();
 	if (interruptTime - lastInterruptTime>200){
         //Write your logis here
+		hours = 0;
+		minutes = 0;
+		seconds = 0;
+		Blynk.virtualWrite(V4,"clr");
+			printf("Reset button pressed\n");
        
     }
 	lastInterruptTime = interruptTime;
@@ -98,16 +131,27 @@ void dismiss_alarm(void){
     long interruptTime = millis();
 	if (interruptTime - lastInterruptTime>200){
         //Write your logis here
-       
+		warning_flag = false;
+		dismissal_Minutes = minutes;// capture of time when alarm was dismissed
+		dismissal_Seconds = seconds;
+		ran =1;	// varibale to show alarm has ran before
+	   printf("Dismiss Alarm\n");
     }
 	lastInterruptTime = interruptTime;
 }
+
 void start_stop_monitoring(void){
     //debouncing
     long interruptTime = millis();
 	if (interruptTime - lastInterruptTime>200){
         //Write your logis here
-       
+		if (STOP==false){
+			STOP = true;
+		}
+		else{
+			STOP = false;
+		}
+		
     }
 	lastInterruptTime = interruptTime;
 }
@@ -148,6 +192,7 @@ int setup_gpio(void){
     wiringPiSPISetup (SPI_CHAN, SPI_SPEED) ;
     printf(" Setting up SPI done ...\n");
 	printf("Setup done\n");
+	softPwmCreate(4,0,100);
     return 0;
 }
 
@@ -163,137 +208,190 @@ int main(int argc, char* argv[])
 	if(setup_gpio()==-1){
         return 0;
     }
-	
-    //WRITE MAIN HERE!!!
 	for(;;){
-	mcp3008_read(analog_ldr_pin);
-	delay(50);
-	mcp3008_read(analog_humidity_pin);
-	delay(50);
-	mcp3008_read(analog_temp_pin);
-	delay(50);
-	printf("|Humidity%d, |Temprature%d, |Light%d|\n", HUMIDITY_READING,TEMP_READING,LDR_READING);
-	delay(100);
+	int HH = getHours();
+	int MM = getMins();
+	int SS = getSecs();
+	timer(delay_time) ;
 	loop(); //for sending data to blynk
+	mcp3008_read(analog_ldr_pin);
+	mcp3008_read(analog_humidity_pin);
+	mcp3008_read(analog_temp_pin);
+	DAC_VOUT = (LDR_READING*HUMIDITY_READING)/1023;//*HUMIDITY_READING;//
+	if(!STOP)
+	{
+		printf("|RTC Time||System Timer|| Humidity ||   Temp   ||   Light   ||  DAC Vout  ||Alarm||\n");
+		printf("|%02d:%02d:%02d||%02d:%02d:%02d    ||    %0.2f  ||   %d     ||    %d    ||   %0.2f   ||  %c  ||\n",HH,MM,SS,hours,minutes,seconds, HUMIDITY_READING,(TEMP_READING*330/1024),LDR_READING,DAC_VOUT,alarm_status);
+	}
 	}
   return 0;
 }
-//to be used for RTC
-//hex to dec...for RTC reading and writing
-int hexCompensation(int units){
-	/*Convert HEX or BCD value to DEC where 0x45 == 0d45 
-	  This was created as the lighXXX functions which determine what GPIO pin to set HIGH/LOW
-	  perform operations which work in base10 and not base16 (incorrect logic) 
-	*/
-	int unitsU = units%0x10;
 
-	if (units >= 0x50){
-		units = 50 + unitsU;
-	}
-	else if (units >= 0x40){
-		units = 40 + unitsU;
-	}
-	else if (units >= 0x30){
-		units = 30 + unitsU;
-	}
-	else if (units >= 0x20){
-		units = 20 + unitsU;
-	}
-	else if (units >= 0x10){
-		units = 10 + unitsU;
-	}
-	return units;
-}
-
-//This function "undoes" hexCompensation in order to write the correct base 16 value through to I2C
-int decCompensation(int units){
-	int unitsU = units%10;
-
-	if (units >= 50){
-		units = 0x50 + unitsU;
-	}
-	else if (units >= 40){
-		units = 0x40 + unitsU;
-	}
-	else if (units >= 30){
-		units = 0x30 + unitsU;
-	}
-	else if (units >= 20){
-		units = 0x20 + unitsU;
-	}
-	else if (units >= 10){
-		units = 0x10 + unitsU;
-	}
-	return units;
+void secPWM(int units){
+	softPwmWrite(4,units);
 }
 
 void mcp3008_read(uint8_t adcnum) //threading? or is it buffering?
 { 
     unsigned int commandout = 0;
     unsigned int adcout = 0;
+	if (STOP==false){
+		if(adcnum==4){  //the value read from the temperature sensorneeds  to  be  converted  to  degrees  Celsius
+			commandout = 0x4;
+			commandout |= 0x18;     // start bit + single-ended bit
+		uint8_t spibuf[3];
 
-    if(adcnum==4){  //the value read from the temperature sensorneeds  to  be  converted  to  degrees  Celsius
-		commandout = 0x4;
+		spibuf[0] = commandout;
+		spibuf[1] = 0;
+		spibuf[2] = 0;
+
+		wiringPiSPIDataRW(0, spibuf, 3);    
+
+		adcout = ((spibuf[1] << 8) | (spibuf[2])) >> 4;
+		TEMP_READING = adcout;
+		}
+
+		else if(adcnum==2){
+		commandout = adcnum & 0x3;  // only 0-7
 		commandout |= 0x18;     // start bit + single-ended bit
-	uint8_t spibuf[3];
+		uint8_t spibuf[3];
 
-    spibuf[0] = commandout;
-    spibuf[1] = 0;
-    spibuf[2] = 0;
+		spibuf[0] = commandout;
+		spibuf[1] = 0;
+		spibuf[2] = 0;
 
-    wiringPiSPIDataRW(0, spibuf, 3);    
+		wiringPiSPIDataRW(0, spibuf, 3);    
 
-    adcout = ((spibuf[1] << 8) | (spibuf[2])) >> 4;
-	TEMP_READING = adcout;
+		adcout = ((spibuf[1] << 8) | (spibuf[2])) >> 4;
+		HUMIDITY_READING = (adcout*3.3)/1023;
+		}
+		else if(adcnum==1){
+		unsigned int commandout = 0;
+		unsigned int adcout = 0;
+		commandout = adcnum & 0x3;  // only 0-7
+		commandout |= 0x18;     // start bit + single-ended bit
+		uint8_t spibuf[3];
+
+		spibuf[0] = commandout;
+		spibuf[1] = 0;
+		spibuf[2] = 0;
+
+		wiringPiSPIDataRW(0, spibuf, 3);    
+
+		adcout = ((spibuf[1] << 8) | (spibuf[2])) >> 4;
+		LDR_READING = adcout;
+		}
 	}
-
-	else if(adcnum==2){
-	commandout = adcnum & 0x3;  // only 0-7
-    commandout |= 0x18;     // start bit + single-ended bit
-	uint8_t spibuf[3];
-
-    spibuf[0] = commandout;
-    spibuf[1] = 0;
-    spibuf[2] = 0;
-
-    wiringPiSPIDataRW(0, spibuf, 3);    
-
-    adcout = ((spibuf[1] << 8) | (spibuf[2])) >> 4;
-	HUMIDITY_READING = adcout;
-	}
-	else if(adcnum==1){
-	unsigned int commandout = 0;
-    unsigned int adcout = 0;
-	commandout = adcnum & 0x3;  // only 0-7
-    commandout |= 0x18;     // start bit + single-ended bit
-	uint8_t spibuf[3];
-
-    spibuf[0] = commandout;
-    spibuf[1] = 0;
-    spibuf[2] = 0;
-
-    wiringPiSPIDataRW(0, spibuf, 3);    
-
-    adcout = ((spibuf[1] << 8) | (spibuf[2])) >> 4;
-	LDR_READING = adcout;
-	}
+	
 }
 
-//flash LED as warning...might use notification setting in blynk
+//flash LED to blynk as warning...might use notification setting in blynk
 void warning_light(void){
-	 Blynk.virtualWrite(V0, 0); 
-     delay(200);
-     Blynk.virtualWrite(V0, 255); 
-     delay(200);
+	int diff = timeConverter(hours, minutes, seconds) - timeConverter(dismissal_hours, dismissal_Minutes, dismissal_Seconds); 
+	if (warning_flag == false){// no need for alarm 
+		Blynk.virtualWrite(V0, 0);
+		alarm_status = ' ';
+	    pinMode (4, OUTPUT) ;
+	  	digitalWrite (4, LOW) ;
+	}else if (warning_flag == true & ran ==0){// first alarm
+     	Blynk.virtualWrite(V0, 255); 
+		alarm_status = '*';
+		 pinMode (4, OUTPUT) ;
+	  	digitalWrite (4, HIGH) ;
+	} else if (warning_flag == true & ran ==1 & (diff> 30)){// last sounded alarm more than 3 min ago
+		Blynk.virtualWrite(V0, 255);
+		alarm_status = '*';
+		 pinMode (4, OUTPUT) ;
+		 	  	digitalWrite (4, HIGH) ;
+	}else if (warning_flag == true & ran ==1 & (diff<= 30)){// last sounded alarm less than 3 min ago
+		Blynk.virtualWrite(V0, 0);
+		alarm_status = ' ';
+			    pinMode (4, OUTPUT) ;
+	  	digitalWrite (4, LOW) ;
+	}
 }
 
 void warning_checker(void){
 	//check temp
-	if ((TEMP_READING>temp_upper_limit)|(TEMP_READING<temp_lower_limit)){
+	if ((DAC_VOUT<0.65)|(DAC_VOUT>2.65)){
 		warning_flag = true;
 	}
 	else{
 		warning_flag = false;
 	} //else do nothing...add code for light and humidity thresholds
 
+}
+
+void timer(int delay_time) 
+{ 
+    // infinte loop because timer will keep  
+    // counting. To kill the process press 
+    // Ctrl+D. If it does not work ask 
+    // ubuntu for other ways. 
+	delay(delay_time);
+
+        // increment seconds 
+        seconds = seconds + (delay_time/delay_compensation); 
+  
+        // if seconds reaches 60 
+		if (seconds>60){
+			
+			 // increment minutes 
+            minutes++; 
+  
+    // if minutes reaches 60 
+            if         (minutes == 60) { 
+          
+                // increment hours 
+                hours++; 
+                minutes = 0; 
+            } 
+            seconds = seconds - 60;
+		}
+    else if (seconds == 60) { 
+          
+            // increment minutes 
+            minutes++; 
+  
+    // if minutes reaches 60 
+            if         (minutes == 60) { 
+          
+                // increment hours 
+                hours++; 
+                minutes = 0; 
+            } 
+            seconds = 0; 
+        
+    } 
+} 
+
+int timeConverter(int hrs, int min, int sec)// converts system time to seconds
+{
+	int time_in_sec = (hrs*60*60)+(min*60)+(sec);
+	return time_in_sec;
+}
+
+
+void getCurrentTime(void){
+  time_t rawtime;
+  struct tm * timeinfo;
+  time ( &rawtime );
+  timeinfo = localtime ( &rawtime );
+
+  HH = timeinfo ->tm_hour;
+  MM = timeinfo ->tm_min;
+  SS = timeinfo ->tm_sec;
+}
+
+int getHours(void){
+    getCurrentTime();
+    return HH;
+}
+
+int getMins(void){
+    return MM;
+}
+
+int getSecs(void){
+    return SS;
 }
